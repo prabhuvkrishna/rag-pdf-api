@@ -1,6 +1,7 @@
 PDF-Based RAG API
 
 Overview
+
 This project implements a Retrieval-Augmented Generation (RAG) system using FastAPI.  It allows users to upload a PDF and ask questions about its content. The system retrieves relevant document chunks using vector similarity search and generates answers grounded in the retrieved context.
 
 

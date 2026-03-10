@@ -49,5 +49,7 @@ End points
 Limitations
 
 (i)Single document at a time only
+
 (ii)No persistent vector storage
+
 (iii)Uses lightweight T5-small model

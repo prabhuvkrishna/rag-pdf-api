@@ -1,7 +1,6 @@
 import os
 import re
 import numpy as np
-import chromadb
 import cohere
 
 from sentence_transformers import SentenceTransformer

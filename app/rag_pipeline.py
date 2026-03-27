@@ -1,90 +1,139 @@
-from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-from transformers import T5Tokenizer, T5ForConditionalGeneration
-
-
-gen_model_name = "t5-small"
-
-gen_tokenizer = T5Tokenizer.from_pretrained(gen_model_name)
-gen_model = T5ForConditionalGeneration.from_pretrained(gen_model_name)
-import torch
-import faiss
+import os
+import re
 import numpy as np
-vector_index = None
-stored_chunks = []
-# Load model once (important)
+import chromadb
+import cohere
+
+from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Global state
+# ---------------------------------------------------------------------------
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Generation Model, local LLM
-gen_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-small")
-gen_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-small")
+co = cohere.Client(api_key=os.getenv("COHERE_API_KEY"))
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50):
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+collection = chroma_client.get_or_create_collection(name="documents")
+
+
+# ---------------------------------------------------------------------------
+# Chunking
+# ---------------------------------------------------------------------------
+def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
+    text = re.sub(r"\s+", " ", text).strip()
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+
     chunks = []
-    start = 0
+    current_chunk = []
+    current_length = 0
 
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start = end - overlap
+    for sentence in sentences:
+        sentence_len = len(sentence)
+
+        if current_length + sentence_len > chunk_size and current_chunk:
+            chunks.append(" ".join(current_chunk))
+            overlap_chunk = []
+            overlap_len = 0
+            for s in reversed(current_chunk):
+                if overlap_len + len(s) <= overlap:
+                    overlap_chunk.insert(0, s)
+                    overlap_len += len(s)
+                else:
+                    break
+            current_chunk = overlap_chunk
+            current_length = overlap_len
+
+        current_chunk.append(sentence)
+        current_length += sentence_len
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
 
     return chunks
 
 
-def create_vector_store(chunks):
-    embeddings = embedding_model.encode(chunks)
+# ---------------------------------------------------------------------------
+# Store chunks into ChromaDB
+# ---------------------------------------------------------------------------
+def store_chunks(chunks: list[str], filename: str):
+    embeddings = embedding_model.encode(chunks, show_progress_bar=False).tolist()
 
-    dimension = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dimension)
+    ids = [f"{filename}_{i}" for i in range(len(chunks))]
+    metadatas = [{"source": filename} for _ in chunks]
 
-    index.add(np.array(embeddings))
+    collection.add(
+        ids=ids,
+        embeddings=embeddings,
+        documents=chunks,
+        metadatas=metadatas,
+    )
 
-    return index, embeddings
 
-def search(index, query, chunks, k=5, threshold=1.5):
-    query_embedding = embedding_model.encode([query])
-    D, I = index.search(query_embedding, k)
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
+def search(query: str, k: int = 5) -> list[dict]:
+    query_embedding = embedding_model.encode([query]).tolist()
 
-    filtered_results = []
+    results = collection.query(
+        query_embeddings=query_embedding,
+        n_results=k,
+        include=["documents", "metadatas", "distances"],
+    )
 
-    for idx, i in enumerate(I[0]):
-        score = float(D[0][idx])
+    output = []
+    for i in range(len(results["documents"][0])):
+        output.append({
+            "text": results["documents"][0][i],
+            "source": results["metadatas"][0][i]["source"],
+            "score": round(results["distances"][0][i], 4),
+        })
 
-        if score < threshold:
-            filtered_results.append({
-                "text": chunks[i]["text"],
-                "source": chunks[i]["source"],
-                "score": score
-            })
+    return output
 
-    return filtered_results
 
-def generate_answer(query):
-    global vector_index, stored_chunks
-
-    if vector_index is None:
+# ---------------------------------------------------------------------------
+# Answer generation
+# ---------------------------------------------------------------------------
+def generate_answer(query: str) -> dict:
+    if collection.count() == 0:
         return {
-            "answer": "No document has been uploaded yet.",
-            "sources": []
+            "answer": "No documents uploaded yet. Please upload a PDF first.",
+            "sources": [],
         }
 
-    results = search(vector_index, query, stored_chunks)
+    results = search(query)
 
     if not results:
         return {
-            "answer": "No relevant information found.",
-            "sources": []
+            "answer": "No relevant information found in the uploaded documents.",
+            "sources": [],
         }
 
-    context = "\n".join([r["text"] for r in results])
+    context = "\n\n".join([
+        f"[Source: {r['source']}]\n{r['text']}" for r in results
+    ])
 
-    input_text = f"question: {query}  context: {context}"
-    input_ids = gen_tokenizer.encode(input_text, return_tensors="pt")
+    prompt = (
+        "You are a precise document assistant. "
+        "Answer the user's question using ONLY the context provided below. "
+        "Do not use any outside knowledge. "
+        "If the answer is not present in the context, say: "
+        "'I could not find an answer to that in the uploaded documents.'\n\n"
+        f"Context:\n{context}\n\n"
+        f"Question: {query}"
+    )
 
-    outputs = gen_model.generate(input_ids, max_length=200)
-    response = gen_tokenizer.decode(outputs[0], skip_special_tokens=True)
+    response = co.chat(
+        model="command-a-03-2025",
+        message=prompt,
+    )
 
     return {
-        "answer": response,
-        "sources": results
+        "answer": response.text,
+        "sources": results,
     }

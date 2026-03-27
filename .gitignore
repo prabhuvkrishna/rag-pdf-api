@@ -1,5 +1,5 @@
-.venv/
-__pycache__/
-*.pyc
-.idea/
-data/
+.env 
+chroma_db/ 
+__pycache__/ 
+.venv/ 
+data/ 

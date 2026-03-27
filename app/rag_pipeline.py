@@ -15,9 +15,6 @@ embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 co = cohere.Client(api_key=os.getenv("COHERE_API_KEY"))
 
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_or_create_collection(name="documents")
-
 
 # ---------------------------------------------------------------------------
 # Chunking

@@ -1,13 +1,10 @@
 faiss-cpu==1.13.2
 fastapi==0.129.0
 httpcore==1.0.9
-httpx==0.28.1
 numpy==2.4.2
 openai==2.21.0
 pypdf==6.7.1
 python-multipart==0.0.22
-scikit-learn==1.8.0
-scipy==1.17.0
 sentence-transformers==5.2.3
 sympy==1.14.0
 transformers==5.2.0

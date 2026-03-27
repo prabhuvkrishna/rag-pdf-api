@@ -1,7 +1,6 @@
 import os
 import re
 import numpy as np
-import cohere
 
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
@@ -13,7 +12,6 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-co = cohere.Client(api_key=os.getenv("COHERE_API_KEY"))
 
 
 # ---------------------------------------------------------------------------
